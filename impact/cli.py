@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from impact.ast_parser import scan_project_incremental
+from impact.browser import open_in_browser
 from impact.config import init_config
 from impact.git_service import GitServiceError, get_changed_files
 from impact.graph_engine import (
@@ -17,13 +18,14 @@ from impact.graph_engine import (
 from impact.visualizer import (
     OutputFormat,
     generate_ai_json_report,
+    generate_full_architectural_graph,
     generate_html_report,
     render_impact_tree,
 )
 
 app = typer.Typer(
     name="impact",
-    help="ImpactTrace: Ferramenta de Análise de Impacto de Mudanças no Código.",
+    help="ImpactTrace: Ferramenta de Análise de Impacto e Grafo Arquitetural de Código.",
     add_completion=False,
 )
 
@@ -86,6 +88,73 @@ def scan(
 
 
 @app.command()
+def graph(
+    project_root: Path = typer.Option(
+        Path("."),
+        "--root",
+        "-r",
+        help="Caminho do diretório raiz do projeto.",
+    ),
+    output: Path = typer.Option(
+        Path(".impact/graph.html"),
+        "--output",
+        "-o",
+        help="Caminho do arquivo HTML de saída para o grafo.",
+    ),
+    layout: str = typer.Option(
+        "hierarchical",
+        "--layout",
+        "-l",
+        help="Layout inicial: 'hierarchical' (Top-Down Raiz-Folha) ou 'force' (Dynamic Physics).",
+    ),
+    browser: str = typer.Option(
+        "default",
+        "--browser",
+        "-b",
+        help="Navegador para abrir o relatório ('default', 'chrome', 'firefox', 'safari', 'edge', 'brave').",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Abre automaticamente o navegador após gerar o arquivo.",
+    ),
+) -> None:
+    """
+    Gera a visualização interativa do Grafo Arquitetural Completo com layout Hierárquico.
+    """
+    try:
+        project_root = project_root.resolve()
+        graph_obj, existing_cache = load_graph_cache(project_root)
+
+        # Se o cache não existir, executa um scan automático
+        if not graph_obj or not existing_cache:
+            with console.status("[bold green]Gerando mapeamento do projeto...[/bold green]"):
+                project_map, _ = scan_project_incremental(project_root, existing_cache)
+                graph_obj = build_graph(project_map)
+                save_graph_cache(project_map, graph_obj, project_root)
+
+        # Gera o HTML do Grafo Completo
+        html_file = generate_full_architectural_graph(
+            graph=graph_obj,
+            output_path=output,
+            initial_layout=layout,
+        )
+
+        print("[bold green]✓[/bold green] Grafo Arquitetural Completo gerado com sucesso!")
+        print(f"  • Arquivo: [cyan]{html_file}[/cyan]")
+        print(f"  • Layout: [magenta]{layout.capitalize()}[/magenta]")
+
+        # Abertura do Navegador
+        if open_browser:
+            used_browser = open_in_browser(html_file, browser_name=browser)
+            print(f"  • Abriu no navegador: [yellow]{used_browser}[/yellow]")
+
+    except Exception as e:
+        stderr_console.print(f"[bold red]✗ Erro ao gerar o grafo arquitetural:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def analyze(
     project_root: Path = typer.Option(
         Path("."),
@@ -103,13 +172,19 @@ def analyze(
         False,
         "--verbose",
         "-v",
-        help="Exibe arquivos seguros (em Verde) no terminal e no grafo.",
+        help="Exibe arquivos seguros no terminal.",
     ),
     web: bool = typer.Option(
         False,
         "--web",
         "-w",
         help="Gera e abre o relatório interativo HTML no navegador.",
+    ),
+    browser: str = typer.Option(
+        "default",
+        "--browser",
+        "-b",
+        help="Navegador para abrir o relatório ('default', 'chrome', 'firefox', 'safari', 'edge').",
     ),
 ) -> None:
     """
@@ -137,12 +212,10 @@ def analyze(
                 print("[bold yellow]ℹ Nenhum arquivo Python com alterações detectado no Git.[/bold yellow]")
             return
 
-        # 1. Carrega o grafo e dados do cache
-        graph, existing_cache = load_graph_cache(project_root)
+        graph_obj, existing_cache = load_graph_cache(project_root)
 
-        # 2. AUTOCURA INCREMENTAL: Se o cache não existir ou houver alteração de hash em arquivos
         missing_or_changed = False
-        if not graph or not existing_cache:
+        if not graph_obj or not existing_cache:
             missing_or_changed = True
         else:
             cached_files = existing_cache.get("files", {})
@@ -153,20 +226,18 @@ def analyze(
 
         if missing_or_changed:
             project_map, _ = scan_project_incremental(project_root, existing_cache)
-            graph = build_graph(project_map)
-            save_graph_cache(project_map, graph, project_root)
+            graph_obj = build_graph(project_map)
+            save_graph_cache(project_map, graph_obj, project_root)
 
-        # 3. Calcula o impacto
-        impact_result = calculate_impact(graph, changed_files)
+        impact_result = calculate_impact(graph_obj, changed_files)
 
-        # 4. Formato de Saída
         if format == OutputFormat.AI_JSON:
-            json_output = generate_ai_json_report(graph, impact_result, pretty=True)
+            json_output = generate_ai_json_report(graph_obj, impact_result, pretty=True)
             sys.stdout.write(json_output + "\n")
 
         else:
             render_impact_tree(
-                graph=graph,
+                graph=graph_obj,
                 changed_files=changed_files,
                 unaffected_files=impact_result["unaffected"],
                 show_unaffected=verbose,
@@ -191,14 +262,15 @@ def analyze(
                 )
             )
 
-        # 5. Renderização Web se solicitado
         if web:
-            generate_html_report(
-                graph=graph,
+            html_path = generate_html_report(
+                graph=graph_obj,
                 impact_result=impact_result,
                 show_unaffected=verbose,
-                auto_open=True,
+                auto_open=False,
             )
+            used_browser = open_in_browser(html_path, browser_name=browser)
+            print(f"  • Relatório aberto no navegador: [yellow]{used_browser}[/yellow]")
 
     except GitServiceError as e:
         stderr_console.print(f"[bold red]✗ Erro no serviço de Git:[/bold red] {e}")
