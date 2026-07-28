@@ -5,6 +5,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from impact.visualizer import render_impact_tree
 from impact.ast_parser import scan_project
 from impact.config import init_config
 from impact.git_service import GitServiceError, get_changed_files
@@ -129,68 +130,31 @@ def analyze(
 
 def _render_impact_report(impact: dict, show_unaffected: bool = False) -> None:
     """
-    Renderiza o relatório visual com o mapeamento semântico de cores e níveis de risco.
+    Renderiza o relatório visual usando a árvore hierárquica do Rich.
     """
     changed = impact["changed"]
-    direct = impact["direct_impact"]
-    indirect = impact["indirect_impact"]
     unaffected = impact["unaffected"]
     total_affected = impact["total_affected_count"]
     total_files = impact["total_project_files"]
 
-    print("\n[bold cyan]🔍 Relatório de Análise de Impacto (ImpactTrace)[/bold cyan]\n")
+    # 1. Carrega e exibe o grafo do cache para passar ao visualizer
+    project_root = Path(".")
+    graph = load_graph_cache(project_root)
 
-    # 1. Tabela: Arquivos Alterados (Causa Raiz) -> Amarelo
-    table_changed = Table(title="📝 Arquivos Modificados no Git (Origem)", title_style="bold yellow")
-    table_changed.add_column("Arquivo Alterado", style="yellow")
-    for file in changed:
-        table_changed.add_row(file)
-    console.print(table_changed)
-    print()
-
-    # 2. Tabela: Impacto Direto (Risco Crítico) -> Vermelho
-    if direct:
-        table_direct = Table(
-            title="💥 Impacto Direto (Risco Crítico / Importam diretamente)",
-            title_style="bold red",
+    if graph:
+        render_impact_tree(
+            graph=graph,
+            changed_files=changed,
+            unaffected_files=unaffected,
+            show_unaffected=show_unaffected,
         )
-        table_direct.add_column("Arquivo Afetado", style="bold red")
-        for file in direct:
-            table_direct.add_row(file)
-        console.print(table_direct)
-        print()
 
-    # 3. Tabela: Impacto Indireto (Risco Moderado) -> Magenta
-    if indirect:
-        table_indirect = Table(
-            title="⚠️ Impacto Indireto (Risco Moderado / Cascata)",
-            title_style="bold magenta",
-        )
-        table_indirect.add_column("Arquivo Afetado em Cascata", style="magenta")
-        for file in indirect:
-            table_indirect.add_row(file)
-        console.print(table_indirect)
-        print()
-
-    # 4. Tabela: Arquivos Íntegros/Seguros -> Verde (Exibido se solicitado via -v/--verbose)
-    if show_unaffected and unaffected:
-        table_unaffected = Table(
-            title="🛡️ Arquivos Íntegros e Seguros (Sem Impacto)",
-            title_style="bold green",
-        )
-        table_unaffected.add_column("Arquivo Intacto", style="green")
-        for file in unaffected:
-            table_unaffected.add_row(file)
-        console.print(table_unaffected)
-        print()
-
-    # 5. Painel de Resumo do Impacto
+    # 2. Painel Resumo no final
     status_color = "green" if total_affected == 0 else "cyan"
     summary_msg = (
         f"[bold]Total de arquivos no projeto:[/bold] {total_files}\n"
         f"[bold]Modificados no Git:[/bold] [yellow]{len(changed)}[/yellow]\n"
-        f"[bold]Impacto Direto (Crítico):[/bold] [red]{len(direct)}[/red]\n"
-        f"[bold]Impacto Indireto (Cascata):[/bold] [magenta]{len(indirect)}[/magenta]\n"
+        f"[bold]Impacto Direto/Indireto Total:[/bold] [red]{total_affected}[/red]\n"
         f"[bold]Arquivos Seguros (Intactos):[/bold] [green]{len(unaffected)}[/green]"
     )
 
@@ -201,7 +165,6 @@ def _render_impact_report(impact: dict, show_unaffected: bool = False) -> None:
             border_style=status_color,
         )
     )
-
 
 if __name__ == "__main__":
     app()
