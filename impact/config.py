@@ -2,65 +2,66 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-# Nome da pasta oculta de configuração e do arquivo dentro do projeto
-IMPACT_DIR_NAME = ".impact"
-CONFIG_FILE_NAME = "config.json"
-
-# Configuração padrão que será gravada no primeiro 'impact init'
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "version": "1.0",
-    "ignore_patterns": [
-        ".git/*",
-        ".impact/*",
-        "venv/*",
-        ".venv/*",
-        "env/*",
-        "__pycache__/*",
-        "*.pyc",
-        ".pytest_cache/*",
-        ".mypy_cache/*",
-        "build/*",
-        "dist/*",
-        "*.egg-info/*"
-    ],
-    "default_mode": "cli",
-    "max_depth": 5,
-    "cache_file": ".impact/cache.json",
     "ignore_dirs": [
-            ".git",
-            ".venv",
-            "venv",
-            "__pycache__",
-            ".impact",
-            ".pytest_cache",
-            "build",
-            "dist",
-            ".egg-info",
-            ".tox",
-            ".mypy_cache",
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".impact",
+        ".pytest_cache",
+        "build",
+        "dist",
+        ".egg-info",
+        ".tox",
+        ".mypy_cache",
     ]
 }
 
 
-def get_impact_dir(project_root: Path = Path(".")) -> Path:
+def find_project_root(start_path: Path = Path(".")) -> Path:
     """
-    Retorna o caminho absoluto do diretório .impact do projeto.
+    Navega para cima no sistema de arquivos a partir do ponto de execução
+    para encontrar a raiz real do projeto procurando por marcadores (.git, .impact, pyproject.toml).
     """
-    return project_root.resolve() / IMPACT_DIR_NAME
+    current = start_path.resolve()
+    if current.is_file():
+        current = current.parent
+
+    for parent in [current] + list(current.parents):
+        if (
+            (parent / ".git").exists()
+            or (parent / ".impact").exists()
+            or (parent / "pyproject.toml").exists()
+            or (parent / "setup.py").exists()
+        ):
+            return parent
+
+    return current
 
 
-def get_config_path(project_root: Path = Path(".")) -> Path:
+def load_config(project_root: Path = Path(".")) -> Dict[str, Any]:
     """
-    Retorna o caminho absoluto do arquivo .impact/config.json.
+    Carrega as configurações do arquivo .impact/config.json na raiz informada.
     """
-    return get_impact_dir(project_root) / CONFIG_FILE_NAME
+    root = project_root.resolve()
+    config_file = root / ".impact" / "config.json"
+    if config_file.is_file():
+        try:
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+            return {**DEFAULT_CONFIG, **data}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return DEFAULT_CONFIG.copy()
 
 
 def init_config(project_root: Path = Path(".")) -> Path:
     """
-    Inicializa a pasta .impact e o arquivo de configuração config.json no diretório do projeto.
+    Inicializa a pasta .impact e o arquivo config.json exatamente no diretório informado,
+    sem navegar para cima na árvore de diretórios.
     """
-    impact_dir = project_root.resolve() / ".impact"
+    root = project_root.resolve()
+    impact_dir = root / ".impact"
     impact_dir.mkdir(parents=True, exist_ok=True)
     config_file = impact_dir / "config.json"
 
@@ -71,21 +72,3 @@ def init_config(project_root: Path = Path(".")) -> Path:
         )
 
     return config_file
-
-
-def load_config(project_root: Path = Path(".")) -> Dict[str, Any]:
-    """
-    Carrega as configurações salvas em .impact/config.json.
-    Se o arquivo não existir, inicializa com os padrões automaticamente.
-
-    Returns:
-        dict: O dicionário com as configurações lidas.
-    """
-    config_path = get_config_path(project_root)
-
-    # Se o usuário tentar carregar sem ter inicializado, cria automaticamente
-    if not config_path.exists():
-        init_config(project_root)
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)

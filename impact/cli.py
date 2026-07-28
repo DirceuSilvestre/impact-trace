@@ -1,5 +1,7 @@
+import json
 import sys
 from pathlib import Path
+from typing import Optional
 import typer
 from rich import print
 from rich.console import Console
@@ -7,7 +9,7 @@ from rich.panel import Panel
 
 from impact.ast_parser import scan_project_incremental
 from impact.browser import open_in_browser
-from impact.config import init_config
+from impact.config import find_project_root, init_config, load_config
 from impact.git_service import GitServiceError, get_changed_files
 from impact.graph_engine import (
     build_graph,
@@ -33,22 +35,35 @@ console = Console()
 stderr_console = Console(stderr=True)
 
 
+def resolve_root(project_root: Optional[Path]) -> Path:
+    """
+    Resolve o caminho raiz do projeto.
+    Se o usuário passou --root explicitamente, usa o caminho fornecido diretamente.
+    Se omitido (None), executa a auto-descoberta subindo a árvore de diretórios.
+    """
+    if project_root is not None:
+        return project_root.resolve()
+    return find_project_root(Path(".")).resolve()
+
+
 @app.command()
 def init(
-    project_root: Path = typer.Option(
-        Path("."),
+    project_root: Optional[Path] = typer.Option(
+        None,
         "--root",
         "-r",
-        help="Caminho do diretório raiz do projeto.",
+        help="Caminho do diretório raiz do projeto (autodetectado se omitido).",
     )
 ) -> None:
     """
     Inicializa o ImpactTrace no projeto atual.
     """
     try:
-        config_path = init_config(project_root)
+        root = resolve_root(project_root)
+        config_path = init_config(root)
         print("[bold green]✓[/bold green] ImpactTrace inicializado com sucesso!")
-        print(f"[dim]Arquivo de configuração:[/dim] [cyan]{config_path}[/cyan]")
+        print(f"  • [bold dim]Raiz do Projeto:[/bold dim] [cyan]{root}[/cyan]")
+        print(f"  • [bold dim]Configuração:[/bold dim] [cyan]{config_path}[/cyan]")
     except Exception as e:
         print(f"[bold red]✗ Erro ao inicializar o ImpactTrace:[/bold red] {e}")
         raise typer.Exit(code=1)
@@ -56,36 +71,51 @@ def init(
 
 @app.command()
 def scan(
-    project_root: Path = typer.Option(
-        Path("."),
+    project_root: Optional[Path] = typer.Option(
+        None,
         "--root",
         "-r",
-        help="Caminho do diretório raiz do projeto.",
+        help="Caminho do diretório raiz do projeto (autodetectado se omitido).",
     )
 ) -> None:
     """
-    Mapeia todo o projeto e constrói o grafo local de forma incremental ($O(1)$).
+    Mapeia todo o projeto a partir da Raiz e constrói o grafo incremental.
     """
     try:
-        project_root = project_root.resolve()
-        _, existing_cache = load_graph_cache(project_root)
+        root = resolve_root(project_root)
+        config = load_config(root)
+        ignore_dirs = set(config.get("ignore_dirs", []))
+
+        _, existing_cache = load_graph_cache(root)
 
         with console.status(
-            "[bold green]Escaneamento incremental AST via SHA-256...[/bold green]"
+            "[bold green]Escaneamento incremental AST a partir da Raiz...[/bold green]"
         ):
-            project_map, stats = scan_project_incremental(project_root, existing_cache)
+            project_map, stats = scan_project_incremental(
+                root, existing_cache, ignore_dirs=ignore_dirs
+            )
             graph = build_graph(project_map)
-            cache_path = save_graph_cache(project_map, graph, project_root)
+            cache_path = save_graph_cache(project_map, graph, root)
 
         node_count = graph.number_of_nodes()
         edge_count = graph.number_of_edges()
 
+        dir_summary = {}
+        for file_path in project_map.keys():
+            top_dir = file_path.split("/")[0] if "/" in file_path else "."
+            dir_summary[top_dir] = dir_summary.get(top_dir, 0) + 1
+
+        breakdown = ", ".join(
+            [f"[yellow]{d}/[/yellow]: {c}" for d, c in sorted(dir_summary.items())]
+        )
+
         print("[bold green]✓[/bold green] Escaneamento incremental concluído!")
-        print(f"  • [cyan]{node_count}[/cyan] arquivos Python no projeto")
+        print(f"  • [bold dim]Raiz Mapeada:[/bold dim] [cyan]{root}[/cyan]")
+        print(f"  • [cyan]{node_count}[/cyan] arquivos Python mapeados ({breakdown})")
         print(f"  • [cyan]{edge_count}[/cyan] relações de dependência mapeadas")
         print(
-            f"  • [green]⚡ Performance:[/green] {stats['cache_hits']}/{stats['total_files']} "
-            f"arquivos no cache ({stats['reparsed']} re-parseados)"
+            f"  • [green]⚡ Cache:[/green] {stats['cache_hits']}/{stats['total_files']} "
+            f"arquivos inalterados ({stats['reparsed']} re-parseados)"
         )
         print(f"  • Cache salvo em: [dim]{cache_path}[/dim]")
 
@@ -96,11 +126,11 @@ def scan(
 
 @app.command()
 def graph(
-    project_root: Path = typer.Option(
-        Path("."),
+    project_root: Optional[Path] = typer.Option(
+        None,
         "--root",
         "-r",
-        help="Caminho do diretório raiz do projeto.",
+        help="Caminho do diretório raiz do projeto (autodetectado se omitido).",
     ),
     output: Path = typer.Option(
         Path(".impact/graph.html"),
@@ -127,27 +157,25 @@ def graph(
     ),
 ) -> None:
     """
-    Gera a visualização interativa do Grafo Arquitetural Completo com layout Hierárquico.
+    Gera a visualização interativa do Grafo Arquitetural Completo de todo o projeto.
     """
     try:
-        project_root = project_root.resolve()
+        root = resolve_root(project_root)
+        config = load_config(root)
+        ignore_dirs = set(config.get("ignore_dirs", []))
 
-        # Ancora caminhos relativos de saída no diretório do projeto
-        if not output.is_absolute():
-            output_file = project_root / output
-        else:
-            output_file = output
+        output_file = output if output.is_absolute() else root / output
 
-        graph_obj, existing_cache = load_graph_cache(project_root)
+        graph_obj, existing_cache = load_graph_cache(root)
 
-        # Se o cache não existir, executa um scan automático
         if not graph_obj or not existing_cache:
-            with console.status("[bold green]Gerando mapeamento do projeto...[/bold green]"):
-                project_map, _ = scan_project_incremental(project_root, existing_cache)
+            with console.status("[bold green]Gerando mapeamento completo do projeto...[/bold green]"):
+                project_map, _ = scan_project_incremental(
+                    root, existing_cache, ignore_dirs=ignore_dirs
+                )
                 graph_obj = build_graph(project_map)
-                save_graph_cache(project_map, graph_obj, project_root)
+                save_graph_cache(project_map, graph_obj, root)
 
-        # Gera o HTML do Grafo Completo
         html_file = generate_full_architectural_graph(
             graph=graph_obj,
             output_path=output_file,
@@ -155,10 +183,10 @@ def graph(
         )
 
         print("[bold green]✓[/bold green] Grafo Arquitetural Completo gerado com sucesso!")
+        print(f"  • Raiz: [cyan]{root}[/cyan]")
         print(f"  • Arquivo: [cyan]{html_file}[/cyan]")
         print(f"  • Layout: [magenta]{layout.capitalize()}[/magenta]")
 
-        # Abertura do Navegador
         if open_browser:
             used_browser = open_in_browser(html_file, browser_name=browser)
             print(f"  • Abriu no navegador: [yellow]{used_browser}[/yellow]")
@@ -170,11 +198,11 @@ def graph(
 
 @app.command()
 def analyze(
-    project_root: Path = typer.Option(
-        Path("."),
+    project_root: Optional[Path] = typer.Option(
+        None,
         "--root",
         "-r",
-        help="Caminho do diretório raiz do projeto.",
+        help="Caminho do diretório raiz do projeto (autodetectado se omitido).",
     ),
     format: OutputFormat = typer.Option(
         OutputFormat.TEXT,
@@ -202,11 +230,14 @@ def analyze(
     ),
 ) -> None:
     """
-    Analisa os arquivos alterados e calcula o impacto direto/indireto.
+    Analisa os arquivos alterados no Git e calcula a propagação do impacto.
     """
     try:
-        project_root = project_root.resolve()
-        changed_files = get_changed_files(project_root)
+        root = resolve_root(project_root)
+        config = load_config(root)
+        ignore_dirs = set(config.get("ignore_dirs", []))
+
+        changed_files = get_changed_files(root)
 
         if not changed_files:
             if format == OutputFormat.AI_JSON:
@@ -226,7 +257,7 @@ def analyze(
                 print("[bold yellow]ℹ Nenhum arquivo Python com alterações detectado no Git.[/bold yellow]")
             return
 
-        graph_obj, existing_cache = load_graph_cache(project_root)
+        graph_obj, existing_cache = load_graph_cache(root)
 
         missing_or_changed = False
         if not graph_obj or not existing_cache:
@@ -239,9 +270,9 @@ def analyze(
                     break
 
         if missing_or_changed:
-            project_map, _ = scan_project_incremental(project_root, existing_cache)
+            project_map, _ = scan_project_incremental(root, existing_cache, ignore_dirs=ignore_dirs)
             graph_obj = build_graph(project_map)
-            save_graph_cache(project_map, graph_obj, project_root)
+            save_graph_cache(project_map, graph_obj, root)
 
         impact_result = calculate_impact(graph_obj, changed_files)
 
@@ -261,6 +292,7 @@ def analyze(
             status_color = "green" if total_affected == 0 else "cyan"
 
             summary_msg = (
+                f"[bold]Raiz do Projeto:[/bold] {root}\n"
                 f"[bold]Total de arquivos no projeto:[/bold] {impact_result['total_project_files']}\n"
                 f"[bold]Modificados no Git:[/bold] [yellow]{len(impact_result['changed'])}[/yellow]\n"
                 f"[bold]Impacto Direto (Crítico):[/bold] [red]{len(impact_result['direct_impact'])}[/red]\n"
