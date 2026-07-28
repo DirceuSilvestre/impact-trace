@@ -1,4 +1,6 @@
+import json
 import webbrowser
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 import networkx as nx
@@ -12,6 +14,7 @@ except ImportError:
     PYVIS_AVAILABLE = False
 
 console = Console()
+stderr_console = Console(stderr=True)
 
 # Paleta de Cores Semântica (Hexadecimal para Pyvis)
 COLOR_CHANGED = "#f59e0b"     # Amarelo (Causa Raiz / Modificado)
@@ -21,6 +24,11 @@ COLOR_SAFE = "#22c55e"        # Verde (Íntegro / Seguro)
 COLOR_BG = "#0f172a"          # Dark Slate (Fundo)
 COLOR_EDGE = "#475569"        # Cinza Slate (Arestas)
 COLOR_EDGE_ACTIVE = "#38bdf8" # Azul Claro (Highlight ao selecionar)
+
+
+class OutputFormat(str, Enum):
+    TEXT = "text"
+    AI_JSON = "ai-json"
 
 
 # ============================================================================
@@ -149,7 +157,7 @@ def generate_html_report(
     Gera um relatório interativo HTML do grafo de impacto usando Pyvis.
     """
     if not PYVIS_AVAILABLE:
-        console.print(
+        stderr_console.print(
             "[bold red]✗ A biblioteca 'pyvis' não está instalada.[/bold red] "
             "Instale com: [cyan]pip install pyvis[/cyan]"
         )
@@ -161,25 +169,21 @@ def generate_html_report(
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Normalização de caminhos (POSIX) para evitar inconsistência de barras no Windows/Git
     changed_set = {Path(f).as_posix() for f in impact_result.get("changed", [])}
     direct_set = {Path(f).as_posix() for f in impact_result.get("direct_impact", [])}
     indirect_set = {Path(f).as_posix() for f in impact_result.get("indirect_impact", [])}
-    unaffected_set = {Path(f).as_posix() for f in impact_result.get("unaffected", [])}
 
     if show_unaffected:
         nodes_to_include = {Path(n).as_posix() for n in graph.nodes()}
     else:
         nodes_to_include = changed_set | direct_set | indirect_set
 
-    # Garantia de resiliência: Assegura que todos os arquivos alterados estejam no conjunto
     nodes_to_include.update(changed_set)
 
     if not nodes_to_include:
-        console.print("[yellow]ℹ Nenhum nó para exibir no grafo Web.[/yellow]")
+        stderr_console.print("[yellow]ℹ Nenhum nó para exibir no grafo Web.[/yellow]")
         return output_path
 
-    # Constrói o subgrafo garantindo a inclusão física dos nós
     subgraph = nx.DiGraph()
     for node in nodes_to_include:
         subgraph.add_node(node)
@@ -190,7 +194,6 @@ def generate_html_report(
         if src_posix in nodes_to_include and tgt_posix in nodes_to_include:
             subgraph.add_edge(src_posix, tgt_posix)
 
-    # Inicializa a rede Pyvis
     net = Network(
         height="850px",
         width="100%",
@@ -199,7 +202,6 @@ def generate_html_report(
         directed=True,
     )
 
-    # Adiciona os nós estilizados
     for node in subgraph.nodes():
         node_str = str(node)
         in_degree = graph.in_degree(node_str) if graph.has_node(node_str) else 0
@@ -244,7 +246,6 @@ def generate_html_report(
             font={"size": 14, "face": "monospace", "color": "#f8fafc"},
         )
 
-    # Adiciona as arestas (Relações de Dependência)
     for source, target in subgraph.edges():
         net.add_edge(
             str(source),
@@ -254,7 +255,6 @@ def generate_html_report(
             title=f"{source} ➜ importa ➜ {target}",
         )
 
-    # Configuração detalhada da física e do layout
     net.set_options(f"""
     {{
       "nodes": {{
@@ -291,9 +291,91 @@ def generate_html_report(
     """)
 
     net.save_graph(str(output_path))
-    console.print(f"[bold green]✓ Relatório Web interativo gerado:[/bold green] [cyan]{output_path}[/cyan]")
+    stderr_console.print(f"[bold green]✓ Relatório Web interativo gerado:[/bold green] [cyan]{output_path}[/cyan]")
 
     if auto_open:
         webbrowser.open(output_path.as_uri())
 
     return output_path
+
+
+# ============================================================================
+# 3. FORMATO PARA AGENTES DE IA (AI-JSON)
+# ============================================================================
+
+def generate_ai_json_report(
+    graph: nx.DiGraph,
+    impact_result: Dict[str, Any],
+    pretty: bool = True,
+) -> str:
+    """
+    Gera uma estrutura JSON otimizada para ser consumida por Agentes de IA
+    (Cursor, GitHub Copilot, Claude Dev/Cline).
+
+    Args:
+        graph (nx.DiGraph): O grafo de dependências do projeto.
+        impact_result (Dict[str, Any]): Resultado do cálculo de impacto.
+        pretty (bool): Se True, formata com indentação de 2 espaços.
+
+    Returns:
+        str: Payload JSON codificado em string.
+    """
+    changed = impact_result.get("changed", [])
+    direct = impact_result.get("direct_impact", [])
+    indirect = impact_result.get("indirect_impact", [])
+    unaffected = impact_result.get("unaffected", [])
+    total_affected = impact_result.get("total_affected_count", 0)
+
+    # Cálculo Heurístico do Nível de Risco
+    if total_affected == 0:
+        risk_level = "LOW"
+    elif total_affected <= 2:
+        risk_level = "MEDIUM"
+    elif total_affected <= 6:
+        risk_level = "HIGH"
+    else:
+        risk_level = "CRITICAL"
+
+    # Mapeamento de arestas do subgrafo afetado (Rota de dependência)
+    affected_nodes = set(changed) | set(direct) | set(indirect)
+    active_edges = []
+    for u, v in graph.edges():
+        u_posix = Path(u).as_posix()
+        v_posix = Path(v).as_posix()
+        if u_posix in affected_nodes and v_posix in affected_nodes:
+            active_edges.append({
+                "importer": u_posix,
+                "imported_module": v_posix
+            })
+
+    # Instrução pré-construída para o Agente de IA
+    prompt_instruction = (
+        f"Análise de Impacto (Risco: {risk_level}): Os arquivos em 'changed_files' foram modificados no Git. "
+        f"Você DEVE revisar prioritariamente os arquivos em 'direct_impact' para garantir que refatorações ou "
+        f"quebras de contrato de API/função não causem quebras. Em seguida, valide a cadeia em 'indirect_impact'. "
+        f"Gere testes unitários focados nas áreas afetadas se necessário."
+    )
+
+    payload = {
+        "version": "1.0.0",
+        "tool": "ImpactTrace",
+        "assessment": {
+            "risk_level": risk_level,
+            "total_project_files": impact_result.get("total_project_files", 0),
+            "changed_files_count": len(changed),
+            "direct_impact_count": len(direct),
+            "indirect_impact_count": len(indirect),
+            "total_affected_count": total_affected,
+        },
+        "impact_graph": {
+            "changed_files": changed,
+            "direct_impact": direct,
+            "indirect_impact": indirect,
+            "unaffected_files_count": len(unaffected),
+            "dependency_routes": active_edges,
+        },
+        "ai_prompt_instruction": prompt_instruction,
+    }
+
+    indent = 2 if pretty else None
+    return json.dumps(payload, indent=indent, ensure_ascii=False)

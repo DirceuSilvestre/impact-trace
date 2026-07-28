@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 import typer
 from rich import print
@@ -13,7 +14,12 @@ from impact.graph_engine import (
     load_graph_cache,
     save_graph_cache,
 )
-from impact.visualizer import generate_html_report, render_impact_tree
+from impact.visualizer import (
+    OutputFormat,
+    generate_ai_json_report,
+    generate_html_report,
+    render_impact_tree,
+)
 
 app = typer.Typer(
     name="impact",
@@ -22,6 +28,7 @@ app = typer.Typer(
 )
 
 console = Console()
+stderr_console = Console(stderr=True)
 
 
 @app.command()
@@ -79,6 +86,12 @@ def analyze(
         "-r",
         help="Caminho do diretório raiz do projeto.",
     ),
+    format: OutputFormat = typer.Option(
+        OutputFormat.TEXT,
+        "--format",
+        "-f",
+        help="Formato de saída do relatório: 'text' (padrão) ou 'ai-json' (pronto para LLMs/Agentes).",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -100,19 +113,38 @@ def analyze(
         changed_files = get_changed_files(project_root)
 
         if not changed_files:
-            print("[bold yellow]ℹ Nenhum arquivo Python com alterações detectado no Git.[/bold yellow]")
+            if format == OutputFormat.AI_JSON:
+                empty_payload = generate_ai_json_report(
+                    build_graph({}),
+                    {
+                        "changed": [],
+                        "direct_impact": [],
+                        "indirect_impact": [],
+                        "unaffected": [],
+                        "total_affected_count": 0,
+                        "total_project_files": 0,
+                    },
+                )
+                sys.stdout.write(empty_payload + "\n")
+            else:
+                print("[bold yellow]ℹ Nenhum arquivo Python com alterações detectado no Git.[/bold yellow]")
             return
 
         # 1. Carrega o grafo do cache
         graph = load_graph_cache(project_root)
 
-        # 2. AUTOCURA: Se o cache não existir ou se houver arquivos alterados fora do grafo, força rescan
+        # 2. AUTOCURA: Se o cache não existir ou houver arquivos alterados fora do grafo, força rescan
         missing_in_graph = (
             any(not graph.has_node(f) for f in changed_files) if graph else True
         )
 
         if graph is None or missing_in_graph:
-            with console.status("[bold yellow]ℹ Sincronizando novo(s) arquivo(s) com o grafo...[/bold yellow]"):
+            if format == OutputFormat.TEXT:
+                with console.status("[bold yellow]ℹ Sincronizando novo(s) arquivo(s) com o grafo...[/bold yellow]"):
+                    project_map = scan_project(project_root)
+                    graph = build_graph(project_map)
+                    save_graph_cache(graph, project_root)
+            else:
                 project_map = scan_project(project_root)
                 graph = build_graph(project_map)
                 save_graph_cache(graph, project_root)
@@ -120,15 +152,41 @@ def analyze(
         # 3. Calcula o impacto
         impact_result = calculate_impact(graph, changed_files)
 
-        # 4. Renderiza no Terminal (Árvore Rich)
-        render_impact_tree(
-            graph=graph,
-            changed_files=changed_files,
-            unaffected_files=impact_result["unaffected"],
-            show_unaffected=verbose,
-        )
+        # 4. Processamento baseado no formato de saída
+        if format == OutputFormat.AI_JSON:
+            json_output = generate_ai_json_report(graph, impact_result, pretty=True)
+            # Imprime EXCLUSIVAMENTE o JSON no stdout sem decorações Rich
+            sys.stdout.write(json_output + "\n")
 
-        # 5. Renderiza no Navegador se a flag --web / -w for informada
+        else:
+            # Modo Padrão (TEXT)
+            render_impact_tree(
+                graph=graph,
+                changed_files=changed_files,
+                unaffected_files=impact_result["unaffected"],
+                show_unaffected=verbose,
+            )
+
+            total_affected = impact_result["total_affected_count"]
+            status_color = "green" if total_affected == 0 else "cyan"
+
+            summary_msg = (
+                f"[bold]Total de arquivos no projeto:[/bold] {impact_result['total_project_files']}\n"
+                f"[bold]Modificados no Git:[/bold] [yellow]{len(impact_result['changed'])}[/yellow]\n"
+                f"[bold]Impacto Direto (Crítico):[/bold] [red]{len(impact_result['direct_impact'])}[/red]\n"
+                f"[bold]Impacto Indireto (Cascata):[/bold] [magenta]{len(impact_result['indirect_impact'])}[/magenta]\n"
+                f"[bold]Arquivos Seguros (Intactos):[/bold] [green]{len(impact_result['unaffected'])}[/green]"
+            )
+
+            console.print(
+                Panel(
+                    summary_msg,
+                    title="📊 Resumo Geral do Projeto",
+                    border_style=status_color,
+                )
+            )
+
+        # 5. Renderiza a visualização Web se a flag --web / -w for informada
         if web:
             generate_html_report(
                 graph=graph,
@@ -137,31 +195,11 @@ def analyze(
                 auto_open=True,
             )
 
-        # 6. Painel do Resumo
-        total_affected = impact_result["total_affected_count"]
-        status_color = "green" if total_affected == 0 else "cyan"
-
-        summary_msg = (
-            f"[bold]Total de arquivos no projeto:[/bold] {impact_result['total_project_files']}\n"
-            f"[bold]Modificados no Git:[/bold] [yellow]{len(impact_result['changed'])}[/yellow]\n"
-            f"[bold]Impacto Direto (Crítico):[/bold] [red]{len(impact_result['direct_impact'])}[/red]\n"
-            f"[bold]Impacto Indireto (Cascata):[/bold] [magenta]{len(impact_result['indirect_impact'])}[/magenta]\n"
-            f"[bold]Arquivos Seguros (Intactos):[/bold] [green]{len(impact_result['unaffected'])}[/green]"
-        )
-
-        console.print(
-            Panel(
-                summary_msg,
-                title="📊 Resumo Geral do Projeto",
-                border_style=status_color,
-            )
-        )
-
     except GitServiceError as e:
-        print(f"[bold red]✗ Erro no serviço de Git:[/bold red] {e}")
+        stderr_console.print(f"[bold red]✗ Erro no serviço de Git:[/bold red] {e}")
         raise typer.Exit(code=1)
     except Exception as e:
-        print(f"[bold red]✗ Erro ao executar a análise:[/bold red] {e}")
+        stderr_console.print(f"[bold red]✗ Erro ao executar a análise:[/bold red] {e}")
         raise typer.Exit(code=1)
 
 
