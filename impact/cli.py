@@ -5,7 +5,7 @@ from rich import print
 from rich.console import Console
 from rich.panel import Panel
 
-from impact.ast_parser import scan_project
+from impact.ast_parser import scan_project_incremental
 from impact.config import init_config
 from impact.git_service import GitServiceError, get_changed_files
 from impact.graph_engine import (
@@ -55,22 +55,29 @@ def scan(
     )
 ) -> None:
     """
-    Mapeia todo o projeto e constrói o grafo local.
+    Mapeia todo o projeto e constrói o grafo local de forma incremental ($O(1)$).
     """
     try:
+        project_root = project_root.resolve()
+        _, existing_cache = load_graph_cache(project_root)
+
         with console.status(
-            "[bold green]Escaneando o projeto e mapeando dependências AST...[/bold green]"
+            "[bold green]Escaneamento incremental AST via SHA-256...[/bold green]"
         ):
-            project_map = scan_project(project_root)
+            project_map, stats = scan_project_incremental(project_root, existing_cache)
             graph = build_graph(project_map)
-            cache_path = save_graph_cache(graph, project_root)
+            cache_path = save_graph_cache(project_map, graph, project_root)
 
         node_count = graph.number_of_nodes()
         edge_count = graph.number_of_edges()
 
-        print("[bold green]✓[/bold green] Escaneamento concluído com sucesso!")
-        print(f"  • [cyan]{node_count}[/cyan] arquivos Python mapeados")
-        print(f"  • [cyan]{edge_count}[/cyan] relações de dependência identificadas")
+        print("[bold green]✓[/bold green] Escaneamento incremental concluído!")
+        print(f"  • [cyan]{node_count}[/cyan] arquivos Python no projeto")
+        print(f"  • [cyan]{edge_count}[/cyan] relações de dependência mapeadas")
+        print(
+            f"  • [green]⚡ Performance:[/green] {stats['cache_hits']}/{stats['total_files']} "
+            f"arquivos no cache ({stats['reparsed']} re-parseados)"
+        )
         print(f"  • Cache salvo em: [dim]{cache_path}[/dim]")
 
     except Exception as e:
@@ -90,7 +97,7 @@ def analyze(
         OutputFormat.TEXT,
         "--format",
         "-f",
-        help="Formato de saída do relatório: 'text' (padrão) ou 'ai-json' (pronto para LLMs/Agentes).",
+        help="Formato de saída: 'text' (padrão) ou 'ai-json' (para LLMs/Agentes).",
     ),
     verbose: bool = typer.Option(
         False,
@@ -130,36 +137,34 @@ def analyze(
                 print("[bold yellow]ℹ Nenhum arquivo Python com alterações detectado no Git.[/bold yellow]")
             return
 
-        # 1. Carrega o grafo do cache
-        graph = load_graph_cache(project_root)
+        # 1. Carrega o grafo e dados do cache
+        graph, existing_cache = load_graph_cache(project_root)
 
-        # 2. AUTOCURA: Se o cache não existir ou houver arquivos alterados fora do grafo, força rescan
-        missing_in_graph = (
-            any(not graph.has_node(f) for f in changed_files) if graph else True
-        )
+        # 2. AUTOCURA INCREMENTAL: Se o cache não existir ou houver alteração de hash em arquivos
+        missing_or_changed = False
+        if not graph or not existing_cache:
+            missing_or_changed = True
+        else:
+            cached_files = existing_cache.get("files", {})
+            for changed in changed_files:
+                if changed not in cached_files:
+                    missing_or_changed = True
+                    break
 
-        if graph is None or missing_in_graph:
-            if format == OutputFormat.TEXT:
-                with console.status("[bold yellow]ℹ Sincronizando novo(s) arquivo(s) com o grafo...[/bold yellow]"):
-                    project_map = scan_project(project_root)
-                    graph = build_graph(project_map)
-                    save_graph_cache(graph, project_root)
-            else:
-                project_map = scan_project(project_root)
-                graph = build_graph(project_map)
-                save_graph_cache(graph, project_root)
+        if missing_or_changed:
+            project_map, _ = scan_project_incremental(project_root, existing_cache)
+            graph = build_graph(project_map)
+            save_graph_cache(project_map, graph, project_root)
 
         # 3. Calcula o impacto
         impact_result = calculate_impact(graph, changed_files)
 
-        # 4. Processamento baseado no formato de saída
+        # 4. Formato de Saída
         if format == OutputFormat.AI_JSON:
             json_output = generate_ai_json_report(graph, impact_result, pretty=True)
-            # Imprime EXCLUSIVAMENTE o JSON no stdout sem decorações Rich
             sys.stdout.write(json_output + "\n")
 
         else:
-            # Modo Padrão (TEXT)
             render_impact_tree(
                 graph=graph,
                 changed_files=changed_files,
@@ -186,7 +191,7 @@ def analyze(
                 )
             )
 
-        # 5. Renderiza a visualização Web se a flag --web / -w for informada
+        # 5. Renderização Web se solicitado
         if web:
             generate_html_report(
                 graph=graph,

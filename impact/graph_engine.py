@@ -1,104 +1,128 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import networkx as nx
 
-from impact.config import load_config
+CACHE_FILE_VERSION = "2.0.0"
 
 
-def build_graph(project_map: Dict[str, List[str]]) -> nx.DiGraph:
+def build_graph(project_map: Dict[str, Any], include_type_checking: bool = False) -> nx.DiGraph:
     """
-    Construi um Grafo Dirigido (DiGraph) do NetworkX a partir do mapa do scanner.
+    Constrói um Grafo Direcionado (DiGraph) do NetworkX a partir do mapa do projeto.
+    
+    Convenção do Grafo:
+    Aresta (A -> B) significa: A importa B (A depende de B).
+    Predecessores de B (predecessors): Módulos que importam B (Consumidores/Afetados).
     """
     graph = nx.DiGraph()
 
+    # Adiciona todos os arquivos mapeados como nós
     for file_path in project_map.keys():
         graph.add_node(file_path)
 
-    for source_file, dependencies in project_map.items():
-        for dep_file in dependencies:
-            graph.add_edge(source_file, dep_file)
+    # Conecta as arestas de dependência
+    for source_file, data in project_map.items():
+        # Arestas de Runtime (Uso Real)
+        for target_file in data.get("runtime_imports", []):
+            if graph.has_node(target_file):
+                graph.add_edge(source_file, target_file, type="runtime")
+
+        # Arestas de Type Checking (Opcional)
+        if include_type_checking:
+            for target_file in data.get("type_checking_imports", []):
+                if graph.has_node(target_file):
+                    graph.add_edge(source_file, target_file, type="type_checking")
 
     return graph
 
 
 def calculate_impact(graph: nx.DiGraph, changed_files: List[str]) -> Dict[str, Any]:
     """
-    Calcula o impacto direto, indireto e identifica os arquivos 100% seguros/não afetados.
+    Calcula a propagação do impacto a partir dos arquivos alterados no Git.
     """
+    changed_set = set(changed_files)
     direct_impact: Set[str] = set()
     indirect_impact: Set[str] = set()
-    all_nodes: Set[str] = set(graph.nodes())
 
-    for changed_file in changed_files:
-        if not graph.has_node(changed_file):
+    all_project_nodes = set(graph.nodes())
+
+    for changed in changed_files:
+        if not graph.has_node(changed):
             continue
 
-        all_affected = nx.ancestors(graph, changed_file)
-        direct_predecessors = set(graph.predecessors(changed_file))
+        # Impacto Direto: Módulos que importam diretamente o arquivo alterado
+        direct_consumers = set(graph.predecessors(changed)) - changed_set
+        direct_impact.update(direct_consumers)
 
-        for affected in all_affected:
-            if affected in changed_files:
-                continue
+        # Impacto Indireto: Cascata em todos os níveis acima
+        all_ancestors = set(nx.ancestors(graph, changed)) - changed_set - direct_consumers
+        indirect_impact.update(all_ancestors)
 
-            if affected in direct_predecessors:
-                direct_impact.add(affected)
-            else:
-                indirect_impact.add(affected)
-
-    # Cálculo computacionalmente eficiente O(N) dos arquivos 100% seguros
-    affected_or_changed = set(changed_files) | direct_impact | indirect_impact
-    unaffected_files = sorted(list(all_nodes - affected_or_changed))
+    unaffected = sorted(list(all_project_nodes - changed_set - direct_impact - indirect_impact))
 
     return {
-        "changed": changed_files,
+        "changed": sorted(list(changed_set)),
         "direct_impact": sorted(list(direct_impact)),
         "indirect_impact": sorted(list(indirect_impact)),
-        "unaffected": unaffected_files,
+        "unaffected": unaffected,
         "total_affected_count": len(direct_impact) + len(indirect_impact),
-        "total_project_files": len(all_nodes),
+        "total_project_files": len(all_project_nodes),
     }
 
 
-def save_graph_cache(graph: nx.DiGraph, root_dir: Path = Path(".")) -> Path:
+def save_graph_cache(
+    project_map: Dict[str, Any],
+    graph: nx.DiGraph,
+    project_root: Path,
+    cache_rel_path: str = ".impact/cache.json",
+) -> Path:
     """
-    Serializa o grafo no formato Node-Link e salva em .impact/cache.json.
+    Salva o cache consolidado com metadados de Hash SHA-256 e estrutura do grafo.
     """
-    root_dir = root_dir.resolve()
-    config = load_config(root_dir)
-    cache_rel_path = config.get("cache_file", ".impact/cache.json")
-    cache_file_path = root_dir / cache_rel_path
+    cache_path = project_root.resolve() / cache_rel_path
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    cache_file_path.parent.mkdir(parents=True, exist_ok=True)
-    graph_data = nx.node_link_data(graph)
+    payload = {
+        "version": CACHE_FILE_VERSION,
+        "files": project_map,
+        "graph_nodes": list(graph.nodes()),
+        "graph_edges": [
+            {
+                "source": u,
+                "target": v,
+                "type": graph.edges[u, v].get("type", "runtime"),
+            }
+            for u, v in graph.edges()
+        ],
+    }
 
-    with open(cache_file_path, "w", encoding="utf-8") as f:
-        json.dump(graph_data, f, indent=2, ensure_ascii=False)
-
-    return cache_file_path
+    cache_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return cache_path
 
 
-def load_graph_cache(root_dir: Path = Path(".")) -> Optional[nx.DiGraph]:
+def load_graph_cache(
+    project_root: Path, cache_rel_path: str = ".impact/cache.json"
+) -> Tuple[Optional[nx.DiGraph], Optional[Dict[str, Any]]]:
     """
-    Carrega o Grafo Dirigido do arquivo .impact/cache.json.
+    Carrega o grafo e os metadados do arquivo de cache JSON.
     """
-    root_dir = root_dir.resolve()
-    config = load_config(root_dir)
-    cache_rel_path = config.get("cache_file", ".impact/cache.json")
-    cache_file_path = root_dir / cache_rel_path
+    cache_path = project_root.resolve() / cache_rel_path
 
-    if not cache_file_path.exists():
-        return None
+    if not cache_path.is_file():
+        return None, None
 
     try:
-        with open(cache_file_path, "r", encoding="utf-8") as f:
-            graph_data = json.load(f)
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        if data.get("version") != CACHE_FILE_VERSION:
+            return None, None
 
-        graph = nx.node_link_graph(graph_data)
-        if not isinstance(graph, nx.DiGraph):
-            graph = nx.DiGraph(graph)
+        graph = nx.DiGraph()
+        for node in data.get("graph_nodes", []):
+            graph.add_node(node)
 
-        return graph
+        for edge in data.get("graph_edges", []):
+            graph.add_edge(edge["source"], edge["target"], type=edge.get("type", "runtime"))
 
-    except Exception:
-        return None
+        return graph, data
+    except (json.JSONDecodeError, KeyError, OSError):
+        return None, None
