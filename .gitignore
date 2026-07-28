@@ -1,2 +1,5 @@
 GUIA_PESSOAL.MD
 venv/
+__pycache__/
+.impact/
+*.html
