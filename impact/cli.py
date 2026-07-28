@@ -97,23 +97,30 @@ def analyze(
     """
     try:
         project_root = project_root.resolve()
-        graph = load_graph_cache(project_root)
-
-        if graph is None:
-            print("[yellow]ℹ Cache não encontrado. Executando scan inicial...[/yellow]")
-            project_map = scan_project(project_root)
-            graph = build_graph(project_map)
-            save_graph_cache(graph, project_root)
-
         changed_files = get_changed_files(project_root)
 
         if not changed_files:
             print("[bold yellow]ℹ Nenhum arquivo Python com alterações detectado no Git.[/bold yellow]")
             return
 
+        # 1. Carrega o grafo do cache
+        graph = load_graph_cache(project_root)
+
+        # 2. AUTOCURA: Se o cache não existir ou se houver arquivos alterados fora do grafo, força rescan
+        missing_in_graph = (
+            any(not graph.has_node(f) for f in changed_files) if graph else True
+        )
+
+        if graph is None or missing_in_graph:
+            with console.status("[bold yellow]ℹ Sincronizando novo(s) arquivo(s) com o grafo...[/bold yellow]"):
+                project_map = scan_project(project_root)
+                graph = build_graph(project_map)
+                save_graph_cache(graph, project_root)
+
+        # 3. Calcula o impacto
         impact_result = calculate_impact(graph, changed_files)
 
-        # 1. Renderiza no Terminal (Árvore Rich)
+        # 4. Renderiza no Terminal (Árvore Rich)
         render_impact_tree(
             graph=graph,
             changed_files=changed_files,
@@ -121,7 +128,7 @@ def analyze(
             show_unaffected=verbose,
         )
 
-        # 2. Renderiza no Navegador se a flag --web / -w for informada
+        # 5. Renderiza no Navegador se a flag --web / -w for informada
         if web:
             generate_html_report(
                 graph=graph,
@@ -130,7 +137,7 @@ def analyze(
                 auto_open=True,
             )
 
-        # 3. Painel do Resumo
+        # 6. Painel do Resumo
         total_affected = impact_result["total_affected_count"]
         status_color = "green" if total_affected == 0 else "cyan"
 

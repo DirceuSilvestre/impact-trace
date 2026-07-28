@@ -147,16 +147,6 @@ def generate_html_report(
 ) -> Path:
     """
     Gera um relatório interativo HTML do grafo de impacto usando Pyvis.
-
-    Args:
-        graph (nx.DiGraph): O grafo completo de dependências.
-        impact_result (Dict[str, Any]): Resultado do cálculo de impacto.
-        output_path (Optional[Path]): Caminho para salvar o HTML.
-        show_unaffected (bool): Se True, inclui arquivos seguros (Verde).
-        auto_open (bool): Se True, abre no navegador padrão automaticamente.
-
-    Returns:
-        Path: Caminho do arquivo HTML gerado.
     """
     if not PYVIS_AVAILABLE:
         console.print(
@@ -171,22 +161,34 @@ def generate_html_report(
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    changed_set = set(impact_result.get("changed", []))
-    direct_set = set(impact_result.get("direct_impact", []))
-    indirect_set = set(impact_result.get("indirect_impact", []))
-    unaffected_set = set(impact_result.get("unaffected", []))
+    # Normalização de caminhos (POSIX) para evitar inconsistência de barras no Windows/Git
+    changed_set = {Path(f).as_posix() for f in impact_result.get("changed", [])}
+    direct_set = {Path(f).as_posix() for f in impact_result.get("direct_impact", [])}
+    indirect_set = {Path(f).as_posix() for f in impact_result.get("indirect_impact", [])}
+    unaffected_set = {Path(f).as_posix() for f in impact_result.get("unaffected", [])}
 
-    # Define quais nós estarão presentes no visualizador HTML
     if show_unaffected:
-        nodes_to_include = set(graph.nodes())
+        nodes_to_include = {Path(n).as_posix() for n in graph.nodes()}
     else:
         nodes_to_include = changed_set | direct_set | indirect_set
+
+    # Garantia de resiliência: Assegura que todos os arquivos alterados estejam no conjunto
+    nodes_to_include.update(changed_set)
 
     if not nodes_to_include:
         console.print("[yellow]ℹ Nenhum nó para exibir no grafo Web.[/yellow]")
         return output_path
 
-    subgraph = graph.subgraph(nodes_to_include).copy()
+    # Constrói o subgrafo garantindo a inclusão física dos nós
+    subgraph = nx.DiGraph()
+    for node in nodes_to_include:
+        subgraph.add_node(node)
+
+    for source, target in graph.edges():
+        src_posix = Path(source).as_posix()
+        tgt_posix = Path(target).as_posix()
+        if src_posix in nodes_to_include and tgt_posix in nodes_to_include:
+            subgraph.add_edge(src_posix, tgt_posix)
 
     # Inicializa a rede Pyvis
     net = Network(
@@ -200,8 +202,8 @@ def generate_html_report(
     # Adiciona os nós estilizados
     for node in subgraph.nodes():
         node_str = str(node)
-        in_degree = graph.in_degree(node)
-        out_degree = graph.out_degree(node)
+        in_degree = graph.in_degree(node_str) if graph.has_node(node_str) else 0
+        out_degree = graph.out_degree(node_str) if graph.has_node(node_str) else 0
 
         if node_str in changed_set:
             color = COLOR_CHANGED
@@ -252,7 +254,7 @@ def generate_html_report(
             title=f"{source} ➜ importa ➜ {target}",
         )
 
-    # Configuração detalhada da física, zoom e controles interativos
+    # Configuração detalhada da física e do layout
     net.set_options(f"""
     {{
       "nodes": {{
@@ -288,7 +290,6 @@ def generate_html_report(
     }}
     """)
 
-    # Escreve e salva o HTML
     net.save_graph(str(output_path))
     console.print(f"[bold green]✓ Relatório Web interativo gerado:[/bold green] [cyan]{output_path}[/cyan]")
 
