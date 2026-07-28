@@ -1,10 +1,31 @@
-from typing import List, Optional, Set
+import webbrowser
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 import networkx as nx
 from rich.console import Console
 from rich.tree import Tree
 
+try:
+    from pyvis.network import Network
+    PYVIS_AVAILABLE = True
+except ImportError:
+    PYVIS_AVAILABLE = False
+
 console = Console()
 
+# Paleta de Cores Semântica (Hexadecimal para Pyvis)
+COLOR_CHANGED = "#f59e0b"     # Amarelo (Causa Raiz / Modificado)
+COLOR_DIRECT = "#ef4444"      # Vermelho (Impacto Direto / Risco Alto)
+COLOR_INDIRECT = "#c084fc"    # Magenta / Violeta (Impacto Indireto / Cascata)
+COLOR_SAFE = "#22c55e"        # Verde (Íntegro / Seguro)
+COLOR_BG = "#0f172a"          # Dark Slate (Fundo)
+COLOR_EDGE = "#475569"        # Cinza Slate (Arestas)
+COLOR_EDGE_ACTIVE = "#38bdf8" # Azul Claro (Highlight ao selecionar)
+
+
+# ============================================================================
+# 1. VISUALIZAÇÃO NO TERMINAL (RICH TREE)
+# ============================================================================
 
 def build_impact_tree(
     graph: nx.DiGraph,
@@ -13,18 +34,7 @@ def build_impact_tree(
     show_unaffected: bool = False,
 ) -> Tree:
     """
-    Constrói uma estrutura de árvore hierárquica usando a biblioteca Rich
-    demonstrando a propagação de impacto a partir dos arquivos alterados
-    até os módulos consumidores.
-
-    Args:
-        graph (nx.DiGraph): O grafo de dependências do projeto.
-        changed_files (List[str]): Arquivos alterados no Git (Causa Raiz).
-        unaffected_files (Optional[List[str]]): Arquivos sem impacto.
-        show_unaffected (bool): Se True, inclui o ramo de arquivos seguros.
-
-    Returns:
-        Tree: Objeto Tree da biblioteca Rich formatado para exibição.
+    Constrói uma árvore hierárquica usando Rich para exibição no terminal.
     """
     root_tree = Tree(
         "[bold cyan]🌳 Árvore de Propagação de Impacto (ImpactTrace)[/bold cyan]",
@@ -35,7 +45,6 @@ def build_impact_tree(
         root_tree.add("[bold yellow]ℹ Nenhum arquivo alterado detectado.[/bold yellow]")
         return root_tree
 
-    # Ramo principal: Causa Raiz
     changed_branch = root_tree.add(
         "[bold yellow]📝 Arquivos Modificados no Git (Origem)[/bold yellow]"
     )
@@ -49,7 +58,6 @@ def build_impact_tree(
             )
             continue
 
-        # Recursão para montar a árvore de dependentes
         _add_dependents_recursively(
             graph,
             parent_tree_node=changed_node,
@@ -58,7 +66,6 @@ def build_impact_tree(
             depth=1,
         )
 
-    # Ramo secundário opcional: Arquivos Seguros
     if show_unaffected and unaffected_files:
         unaffected_branch = root_tree.add(
             f"[bold green]🛡️ Arquivos Íntegros e Seguros ({len(unaffected_files)})[/bold green]"
@@ -77,10 +84,8 @@ def _add_dependents_recursively(
     depth: int,
 ) -> None:
     """
-    Função auxiliar recursiva que percorre os predecessores do nó no grafo
-    (módulos que importam o nó atual) construindo os galhos da árvore.
+    Auxiliar recursivo que percorre os predecessores (módulos consumidores).
     """
-    # Predecessores = arquivos que importam o current_node
     dependents = sorted(list(graph.predecessors(current_node)))
 
     if not dependents:
@@ -92,7 +97,6 @@ def _add_dependents_recursively(
 
     for dep in dependents:
         if dep in visited:
-            # Previne estouro de pilha/loops em dependências circulares
             parent_tree_node.add(f"[dim red]🔄 {dep} (Ciclo de importação detectado)[/dim red]")
             continue
 
@@ -100,15 +104,12 @@ def _add_dependents_recursively(
         new_visited.add(dep)
 
         if depth == 1:
-            # Impacto Direto -> Vermelho
             label = f"[bold red]💥 {dep}[/bold red] [dim italic](Impacto Direto)[/dim italic]"
             child_node = parent_tree_node.add(label)
         else:
-            # Impacto Indireto -> Magenta
             label = f"[bold magenta]⚠️ {dep}[/bold magenta] [dim italic](Impacto Indireto - Nível {depth})[/dim italic]"
             child_node = parent_tree_node.add(label)
 
-        # Propaga a busca para os próximos níveis da cascata
         _add_dependents_recursively(
             graph,
             parent_tree_node=child_node,
@@ -125,9 +126,173 @@ def render_impact_tree(
     show_unaffected: bool = False,
 ) -> None:
     """
-    Helper direto para construir e renderizar a árvore no terminal.
+    Helper para renderizar a árvore no terminal.
     """
     tree = build_impact_tree(graph, changed_files, unaffected_files, show_unaffected)
     console.print()
     console.print(tree)
     console.print()
+
+
+# ============================================================================
+# 2. VISUALIZAÇÃO INTERATIVA WEB (PYVIS)
+# ============================================================================
+
+def generate_html_report(
+    graph: nx.DiGraph,
+    impact_result: Dict[str, Any],
+    output_path: Optional[Path] = None,
+    show_unaffected: bool = False,
+    auto_open: bool = True,
+) -> Path:
+    """
+    Gera um relatório interativo HTML do grafo de impacto usando Pyvis.
+
+    Args:
+        graph (nx.DiGraph): O grafo completo de dependências.
+        impact_result (Dict[str, Any]): Resultado do cálculo de impacto.
+        output_path (Optional[Path]): Caminho para salvar o HTML.
+        show_unaffected (bool): Se True, inclui arquivos seguros (Verde).
+        auto_open (bool): Se True, abre no navegador padrão automaticamente.
+
+    Returns:
+        Path: Caminho do arquivo HTML gerado.
+    """
+    if not PYVIS_AVAILABLE:
+        console.print(
+            "[bold red]✗ A biblioteca 'pyvis' não está instalada.[/bold red] "
+            "Instale com: [cyan]pip install pyvis[/cyan]"
+        )
+        raise RuntimeError("Biblioteca 'pyvis' não encontrada.")
+
+    if output_path is None:
+        output_path = Path(".impact/report.html")
+
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    changed_set = set(impact_result.get("changed", []))
+    direct_set = set(impact_result.get("direct_impact", []))
+    indirect_set = set(impact_result.get("indirect_impact", []))
+    unaffected_set = set(impact_result.get("unaffected", []))
+
+    # Define quais nós estarão presentes no visualizador HTML
+    if show_unaffected:
+        nodes_to_include = set(graph.nodes())
+    else:
+        nodes_to_include = changed_set | direct_set | indirect_set
+
+    if not nodes_to_include:
+        console.print("[yellow]ℹ Nenhum nó para exibir no grafo Web.[/yellow]")
+        return output_path
+
+    subgraph = graph.subgraph(nodes_to_include).copy()
+
+    # Inicializa a rede Pyvis
+    net = Network(
+        height="850px",
+        width="100%",
+        bgcolor=COLOR_BG,
+        font_color="#f8fafc",
+        directed=True,
+    )
+
+    # Adiciona os nós estilizados
+    for node in subgraph.nodes():
+        node_str = str(node)
+        in_degree = graph.in_degree(node)
+        out_degree = graph.out_degree(node)
+
+        if node_str in changed_set:
+            color = COLOR_CHANGED
+            size = 28
+            shape = "dot"
+            status = "📝 Causa Raiz (Modificado no Git)"
+        elif node_str in direct_set:
+            color = COLOR_DIRECT
+            size = 22
+            shape = "dot"
+            status = "💥 Impacto Direto (Risco Alto)"
+        elif node_str in indirect_set:
+            color = COLOR_INDIRECT
+            size = 18
+            shape = "dot"
+            status = "⚠️ Impacto Indireto (Cascata)"
+        else:
+            color = COLOR_SAFE
+            size = 12
+            shape = "dot"
+            status = "🛡️ Íntegro / Seguro"
+
+        tooltip_html = (
+            f"<b>Arquivo:</b> {node_str}<br/>"
+            f"<b>Status:</b> {status}<br/>"
+            f"<b>Consumidores (In-Degree):</b> {in_degree}<br/>"
+            f"<b>Dependências (Out-Degree):</b> {out_degree}"
+        )
+
+        net.add_node(
+            node_str,
+            label=Path(node_str).name,
+            title=tooltip_html,
+            color=color,
+            size=size,
+            shape=shape,
+            borderWidth=2,
+            font={"size": 14, "face": "monospace", "color": "#f8fafc"},
+        )
+
+    # Adiciona as arestas (Relações de Dependência)
+    for source, target in subgraph.edges():
+        net.add_edge(
+            str(source),
+            str(target),
+            color={"color": COLOR_EDGE, "highlight": COLOR_EDGE_ACTIVE},
+            arrows={"to": {"enabled": True, "scaleFactor": 0.8}},
+            title=f"{source} ➜ importa ➜ {target}",
+        )
+
+    # Configuração detalhada da física, zoom e controles interativos
+    net.set_options(f"""
+    {{
+      "nodes": {{
+        "borderWidthSelected": 4
+      }},
+      "edges": {{
+        "smooth": {{
+          "type": "cubicBezier",
+          "forceDirection": "horizontal",
+          "roundness": 0.4
+        }}
+      }},
+      "physics": {{
+        "solver": "forceAtlas2Based",
+        "forceAtlas2Based": {{
+          "gravitationalConstant": -60,
+          "centralGravity": 0.01,
+          "springLength": 120,
+          "springConstant": 0.08,
+          "damping": 0.4
+        }},
+        "maxVelocity": 50,
+        "minVelocity": 0.75,
+        "timestep": 0.5
+      }},
+      "interaction": {{
+        "hover": true,
+        "tooltipDelay": 100,
+        "navigationButtons": true,
+        "keyboard": true,
+        "zoomView": true
+      }}
+    }}
+    """)
+
+    # Escreve e salva o HTML
+    net.save_graph(str(output_path))
+    console.print(f"[bold green]✓ Relatório Web interativo gerado:[/bold green] [cyan]{output_path}[/cyan]")
+
+    if auto_open:
+        webbrowser.open(output_path.as_uri())
+
+    return output_path
