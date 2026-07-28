@@ -34,12 +34,19 @@ stderr_console = Console(stderr=True)
 
 
 @app.command()
-def init() -> None:
+def init(
+    project_root: Path = typer.Option(
+        Path("."),
+        "--root",
+        "-r",
+        help="Caminho do diretório raiz do projeto.",
+    )
+) -> None:
     """
     Inicializa o ImpactTrace no projeto atual.
     """
     try:
-        config_path = init_config()
+        config_path = init_config(project_root)
         print("[bold green]✓[/bold green] ImpactTrace inicializado com sucesso!")
         print(f"[dim]Arquivo de configuração:[/dim] [cyan]{config_path}[/cyan]")
     except Exception as e:
@@ -124,6 +131,13 @@ def graph(
     """
     try:
         project_root = project_root.resolve()
+
+        # Ancora caminhos relativos de saída no diretório do projeto
+        if not output.is_absolute():
+            output_file = project_root / output
+        else:
+            output_file = output
+
         graph_obj, existing_cache = load_graph_cache(project_root)
 
         # Se o cache não existir, executa um scan automático
@@ -136,7 +150,7 @@ def graph(
         # Gera o HTML do Grafo Completo
         html_file = generate_full_architectural_graph(
             graph=graph_obj,
-            output_path=output,
+            output_path=output_file,
             initial_layout=layout,
         )
 

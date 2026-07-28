@@ -25,7 +25,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     ],
     "default_mode": "cli",
     "max_depth": 5,
-    "cache_file": ".impact/cache.json"
+    "cache_file": ".impact/cache.json",
+    "ignore_dirs": [
+            ".git",
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".impact",
+            ".pytest_cache",
+            "build",
+            "dist",
+            ".egg-info",
+            ".tox",
+            ".mypy_cache",
+    ]
 }
 
 
@@ -45,24 +58,19 @@ def get_config_path(project_root: Path = Path(".")) -> Path:
 
 def init_config(project_root: Path = Path(".")) -> Path:
     """
-    Cria a pasta .impact/ e o arquivo config.json com as regras padrão,
-    caso ainda não existam.
-
-    Returns:
-        Path: O caminho absoluto do arquivo config.json gerado.
+    Inicializa a pasta .impact e o arquivo de configuração config.json no diretório do projeto.
     """
-    impact_dir = get_impact_dir(project_root)
-    config_path = get_config_path(project_root)
-
-    # 1. Cria a pasta .impact/ se ela não existir
+    impact_dir = project_root.resolve() / ".impact"
     impact_dir.mkdir(parents=True, exist_ok=True)
+    config_file = impact_dir / "config.json"
 
-    # 2. Cria o arquivo config.json padrão apenas se não existir (para não sobrescrever edições do usuário)
-    if not config_path.exists():
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_CONFIG, f, indent=2, ensure_ascii=False)
+    if not config_file.exists():
+        config_file.write_text(
+            json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
-    return config_path
+    return config_file
 
 
 def load_config(project_root: Path = Path(".")) -> Dict[str, Any]:
