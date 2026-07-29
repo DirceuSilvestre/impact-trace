@@ -1,6 +1,6 @@
 # 🌌 ImpactTrace
 
-> **Análise de Impacto de Código Instantânea e Mapeamento Arquitetural para Desenvolvedores e Agentes de IA.**
+> **Análise Instantânea de Impacto de Código e Mapeamento Arquitetural para Desenvolvedores e Agentes de IA.**
 
 ---
 
@@ -20,12 +20,12 @@ O **ImpactTrace** analisa a estrutura do seu projeto em milissegundos via **AST 
 
 Uma das maiores vantagens de engenharia do ImpactTrace é a sua **modularidade**. Você **não** precisa clonar nem copiar todo o repositório de desenvolvimento do ImpactTrace para o seu projeto pessoal.
 
-Basta copiar a pasta `impact/` para a raiz do seu projeto existente:
+Basta copiar a pasta **`impact/`** (e o arquivo `requirements.txt` do projeto pra dentro da pasta `impact/`) para a raiz do seu projeto existente:
 
 ```text
 seu-projeto-pessoal/
 ├── impact/                <-- Apenas esta pasta precisa ser copiada!
-│   ├── __init__.py
+│   ├── requirements_impact.txt
 │   ├── ast_parser.py      # Extração de AST e Hashes SHA-256
 │   ├── browser.py         # Launch e fallback de navegadores
 │   ├── cli.py             # Ponto de entrada CLI (Typer)
@@ -49,7 +49,7 @@ Ao projetar o ImpactTrace, tomamos decisões conscientes sobre onde investir tem
 
 | Aspecto | Decisão de Design | Trade-off Assumido |
 | --- | --- | --- |
-| **Instalação das Bibliotecas** | Uso de dependências como `pyvis`, `networkx`, `rich` e `gitpython`. | **A Instalação Inicial Demora Razoavelmente:** O download e compilação dessas bibliotecas no `pip install` leva alguns segundos a mais. |
+| **Instalação das Bibliotecas** | Uso de dependências como `pyvis`, `networkx`, `rich` e `gitpython`. | **A Instalação Inicial Não é Veloz:** O download e compilação dessas bibliotecas no `pip install` leva alguns segundos a mais. |
 | **Visualização no Navegador** | Geração de HTML5 interativo via VisNetwork. | **A Recompensa:** Gráficos ricos, arrastáveis, com zoom e alternância de layout (Hierárquico vs Força-Dirigida) que eliminam qualquer dúvida sobre a arquitetura. |
 | **Execução do Scan e Análise** | Parser AST com cache incremental via SHA-256 e poda no nível do S.O. | **Velocidade Ultra-Rápida ($O(N)$):** O escaneamento e o cálculo de impacto rodam em **poucos milissegundos**, mesmo em projetos com centenas de arquivos. |
 
@@ -66,7 +66,7 @@ pip install typer rich networkx pyvis gitpython
 
 ```
 
-*(Ou adicione as linhas acima ao seu `requirements.txt` e rode `pip install -r requirements.txt`).*
+*(Ou adicione as linhas acima ao seu `requirements_impact.txt` dentro da pasta `impact/` e rode `pip install -r impact/requirements.txt`).*
 
 ### 2. Inicialize o ImpactTrace no Seu Projeto
 
@@ -74,7 +74,10 @@ Dentro da pasta do seu projeto pessoal, execute:
 
 ```bash
 python impact/cli.py init
-
+```
+ou
+```bash
+py -m impact.cli init
 ```
 
 > *Isso criará o diretório local `.impact/` com as regras de exclusão padrão (`venv`, `.git`, etc).*
@@ -85,7 +88,10 @@ Para construir o primeiro grafo de dependências do projeto:
 
 ```bash
 python impact/cli.py scan
-
+```
+ou
+```bash
+py -m impact.cli scan
 ```
 
 Você verá um diagnóstico imediato dos arquivos analisados e a quantidade de relações encontradas.
@@ -100,7 +106,10 @@ Altere um ou mais arquivos no seu código e rode:
 
 ```bash
 python impact/cli.py analyze
-
+```
+ou
+```bash
+py -m impact.cli analyze
 ```
 
 O terminal exibirá uma árvore colorida dividida em:
@@ -113,14 +122,20 @@ O terminal exibirá uma árvore colorida dividida em:
 
 ```bash
 python impact/cli.py analyze --web
-
+```
+ou
+```bash
+py -m impact.cli analyze --web
 ```
 
 #### 🤖 Exportando para Agentes de IA (Cursor, Copilot, ChatGPT):
 
 ```bash
 python impact/cli.py analyze --format ai-json
-
+```
+ou
+```bash
+py -m impact.cli analyze --format ai-json
 ```
 
 > *Gera uma estrutura JSON limpa projetada para servir de contexto exato para LLMs entenderem o impacto do seu refactoring.*
@@ -133,15 +148,16 @@ Para ver a estrutura completa de todas as conexões do seu projeto em uma interf
 
 ```bash
 python impact/cli.py graph
-
+```
+ou
+```bash
+py -m impact.cli graph
 ```
 
 * **Legenda Visual:**
 * 🔵 **Azul (Raiz):** Entrypoints / Views (Top da hierarquia).
 * 🟣 **Roxo (Intermediário):** Serviços, Validadores e Regras de Negócio.
 * 🟢 **Verde (Folha):** Módulos utilitários e conexões de Banco de Dados.
-
-
 
 ---
 
