@@ -4,18 +4,28 @@ from typing import Any, Dict
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "ignore_dirs": [
+        # Python
         ".git",
         ".venv",
         "venv",
         "__pycache__",
-        "impact",
+        #"impact",
         ".impact",
         ".pytest_cache",
         "build",
         "dist",
-        ".egg-info",
-        ".tox",
-        ".mypy_cache",
+        # Node / JS / TS
+        "node_modules",
+        ".next",
+        ".nuxt",
+        "coverage",
+        # Go / Rust / C# / Java
+        "target",
+        "vendor",
+        "bin",
+        "obj",
+        ".idea",
+        ".vscode",
     ]
 }
 

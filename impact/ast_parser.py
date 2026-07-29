@@ -4,6 +4,14 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from impact.parsers.python_parser import PythonLanguageParser
+from impact.parsers.registry import registry
+from impact.parsers.ts_js_parser import TSJSModuleParser
+
+# Registra os Parsers Nativos
+registry.register(PythonLanguageParser())
+registry.register(TSJSModuleParser())
+
 
 def calculate_file_hash(file_path: Path) -> str:
     """

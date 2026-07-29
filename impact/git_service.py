@@ -1,6 +1,8 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import List
+
+from impact.parsers.registry import registry
 
 
 class GitServiceError(Exception):
@@ -29,14 +31,14 @@ def is_git_repository(root_dir: Path = Path(".")) -> bool:
 
 def get_changed_files(root_dir: Path = Path(".")) -> List[str]:
     """
-    Obtém a lista de arquivos .py alterados (modificados, novos/untracked, staged)
-    no repositório Git local.
+    Obtém a lista de arquivos alterados no Git cujas extensões
+    sejam suportadas pelos parsers registrados no ImpactTrace.
 
     Args:
         root_dir (Path): Diretório raiz do repositório Git.
 
     Returns:
-        List[str]: Lista ordenada de caminhos relativos no formato POSIX (ex: 'impact/cli.py')
+        List[str]: Lista ordenada de caminhos relativos no formato POSIX (ex: 'src/app.ts')
 
     Raises:
         GitServiceError: Se o diretório não for um repositório Git ou se ocorrer erro na execução.
@@ -47,6 +49,9 @@ def get_changed_files(root_dir: Path = Path(".")) -> List[str]:
         raise GitServiceError(
             f"O diretório '{root_dir}' não é um repositório Git válido ou o Git não está instalado."
         )
+
+    # Obtém a lista dinâmica de extensões suportadas (.py, .ts, .tsx, .js, .go, .rs, etc)
+    supported_exts = registry.get_all_supported_extensions()
 
     try:
         # 'git status --porcelain' entrega uma saída padronizada e estável para scripts
@@ -68,7 +73,7 @@ def get_changed_files(root_dir: Path = Path(".")) -> List[str]:
             # Os 2 primeiros caracteres representam a flag de status no Git (ex: ' M', 'M ', '??')
             path_part = line[3:].strip()
 
-            # Trata caso de arquivo renomeado (ex: 'old.py -> new.py')
+            # Trata caso de arquivo renomeado (ex: 'old.ts -> new.ts')
             if "->" in path_part:
                 path_part = path_part.split("->")[-1].strip()
 
@@ -77,8 +82,9 @@ def get_changed_files(root_dir: Path = Path(".")) -> List[str]:
 
             file_path = Path(path_part)
 
-            # Filtramos apenas arquivos .py para o escopo do nosso analisador AST
-            if file_path.suffix == ".py":
+            # AQUI ESTÁ A MUDANÇA PRINCIPAL:
+            # Em vez de aceitar só '.py', aceita qualquer extensão que algum parser saiba analisar
+            if file_path.suffix.lower() in supported_exts:
                 changed_files.add(file_path.as_posix())
 
         return sorted(list(changed_files))
