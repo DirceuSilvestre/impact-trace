@@ -1,6 +1,8 @@
 # 🌌 ImpactTrace
 
 > **Análise Instantânea de Impacto de Código e Mapeamento Arquitetural para Desenvolvedores e Agentes de IA.**
+>
+> <img src="testeprojeto2.png" alt="Imagem real de resultado do projeto avaliando o próprio projeto ImpactTrace">
 
 ---
 
