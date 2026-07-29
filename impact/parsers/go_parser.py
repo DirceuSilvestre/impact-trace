@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
-from impact.ast_parser import calculate_file_hash
+from impact.utils import calculate_file_hash
 from impact.parsers.base import BaseLanguageParser
 
 

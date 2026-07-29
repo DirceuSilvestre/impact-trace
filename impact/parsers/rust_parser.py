@@ -1,9 +1,9 @@
 import re
 from pathlib import Path
-from typing import Any, Dict, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
-from impact.ast_parser import calculate_file_hash
 from impact.parsers.base import BaseLanguageParser
+from impact.utils import calculate_file_hash
 
 
 class RustLanguageParser(BaseLanguageParser):
@@ -37,12 +37,10 @@ class RustLanguageParser(BaseLanguageParser):
                 if resolved:
                     runtime_imports.add(resolved)
 
-            # 2. Re-uso de módulos internos: use crate::services::user;
+            # 2. Re-uso de módulos internos: use crate::models::User;
             for crate_path in self.USE_CRATE_REGEX.findall(content):
-                parts = crate_path.split("::")
-                sub_path = "/".join(parts)
-                resolved = self._resolve_rust_path(sub_path, project_root)
-                if resolved:
+                resolved = self._resolve_rust_path(crate_path, project_root)
+                if resolved and resolved != rel_path:
                     runtime_imports.add(resolved)
 
             return rel_path, {
@@ -61,13 +59,11 @@ class RustLanguageParser(BaseLanguageParser):
 
     def _resolve_rust_module(
         self, mod_name: str, current_dir: Path, project_root: Path
-    ) -> str | None:
-        # Testa formato 1: mod_name.rs
+    ) -> Optional[str]:
         file_candidate = current_dir / f"{mod_name}.rs"
         if file_candidate.is_file():
             return file_candidate.relative_to(project_root.resolve()).as_posix()
 
-        # Testa formato 2: mod_name/mod.rs
         folder_candidate = current_dir / mod_name / "mod.rs"
         if folder_candidate.is_file():
             return folder_candidate.relative_to(project_root.resolve()).as_posix()
@@ -75,16 +71,28 @@ class RustLanguageParser(BaseLanguageParser):
         return None
 
     def _resolve_rust_path(
-        self, relative_src_path: str, project_root: Path
-    ) -> str | None:
+        self, crate_import_path: str, project_root: Path
+    ) -> Optional[str]:
+        """
+        Resolve caminhos 'crate::a::b::Item'.
+        Realiza busca regressiva: testa o caminho completo e, se for um item/struct,
+        remove o último segmento para localizar o módulo hospedeiro (ex: mod.rs ou .rs).
+        """
         src_dir = project_root / "src"
+        parts = crate_import_path.split("::")
 
-        file_candidate = src_dir / f"{relative_src_path}.rs"
-        if file_candidate.is_file():
-            return file_candidate.relative_to(project_root.resolve()).as_posix()
+        while parts:
+            sub_path = "/".join(parts)
 
-        folder_candidate = src_dir / relative_src_path / "mod.rs"
-        if folder_candidate.is_file():
-            return folder_candidate.relative_to(project_root.resolve()).as_posix()
+            file_candidate = src_dir / f"{sub_path}.rs"
+            if file_candidate.is_file():
+                return file_candidate.relative_to(project_root.resolve()).as_posix()
+
+            folder_candidate = src_dir / sub_path / "mod.rs"
+            if folder_candidate.is_file():
+                return folder_candidate.relative_to(project_root.resolve()).as_posix()
+
+            # Descarta o último elemento (ex: nome de struct/função/enum) e tenta o módulo pai
+            parts.pop()
 
         return None
