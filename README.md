@@ -1,7 +1,7 @@
 <div align="center">
   <img src="images/logo.png" alt="ImpactTrace Logo" width="120" />
   <h1>ImpactTrace</h1>
-  <h3>O mapeador de raio de impacto e dependências para Python.</h3>
+  <h3>O mapeador de raio de impacto e dependências para o seu projeto (Python, Go, PHP, C#, JS, TS, Rust, Java, Kotlin).</h3>
   <p>Saiba exatamente o que vai quebrar antes de fazer o push.<br/><b>Zero configurações. Análise via AST. Grafos interativos.</b> 100% Local.</p>
 
   <p>
@@ -55,7 +55,6 @@
 | **Mapeamento de Efeito Cascata** | ❌ | 🧠 Lento / Falho | ✅ **Instantâneo (AST)** |
 | **Relatório Otimizado para LLMs / Agentes** | ❌ | ❌ | ✅ **JSON Estruturado** |
 | **Visualização de Grafo Interativo** | ❌ | ❌ | ✅ **HTML / Vis.js** |
-| **Detecção de Type-Checking vs Runtime** | ❌ | ❌ | ✅ |
 
 ---
 
