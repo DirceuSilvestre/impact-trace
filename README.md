@@ -1,59 +1,92 @@
-# 🌌 ImpactTrace
+<div align="center">
+  <img src="images/logo.png" alt="ImpactTrace Logo" width="120" />
+  <h1>ImpactTrace</h1>
+  <h3>O mapeador de raio de impacto e dependências para Python.</h3>
+  <p>Saiba exatamente o que vai quebrar antes de fazer o push.<br/><b>Zero configurações. Análise via AST. Grafos interativos.</b> 100% Local.</p>
 
-> **Análise Instantânea de Impacto de Código e Mapeamento Arquitetural para Desenvolvedores e Agentes de IA.**
->
-> <img src="testeprojeto2.png" alt="Imagem real de resultado do projeto avaliando o próprio projeto ImpactTrace">
+  <p>
+    <a href="#quickstart">Quickstart</a> ·
+    <a href="#features">Recursos</a> ·
+    <a href="#vs-others">vs Git Diff</a> ·
+    <a href="#ai-integration">Agentes de IA</a> ·
+    <a href="#architecture">Arquitetura</a> ·
+    <a href="#faq">FAQ</a>
+  </p>
+
+  <!-- Badges -->
+  <p>
+    <img src="https://img.shields.io/pypi/v/impacttrace?style=flat-square&color=10b981" alt="PyPI" />
+    <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+    <img src="https://img.shields.io/badge/python-3.10%2B-38bdf8?style=flat-square" alt="Python" />
+  </p>
+
+  <!-- Screenshot/GIF Principal -->
+  <img src="images/testeprojeto2.png" alt="ImpactTrace Demo" width="100%"/>
+</div>
+
+> **Revisar código visualmente cego é um risco desnecessário.** O `git diff` mostra as linhas que você alterou, mas não mostra quem depende delas. O ImpactTrace analisa a AST do seu código, calcula o efeito cascata e gera grafos interativos de impacto em milissegundos.
 
 ---
 
-## 📌 O Problema e a Solução
+## 📸 Veja em Ação
 
-### 💥 O Problema ("Efeito Borboleta no Código")
-
-Em sistemas em crescimento, uma alteração aparentemente inofensiva em um arquivo de base (como uma tabela de banco em `database.py` ou um modelo em `models.py`) pode quebrar silenciosamente endpoints e validadores em camadas superiores. Rastrear manualmente *"quem depende de quem"* exige tempo e memória cognitiva.
-
-### 🛡️ A Solução
-
-O **ImpactTrace** analisa a estrutura do seu projeto em milissegundos via **AST (Abstract Syntax Tree)** sem executar o seu código. Ele constrói um **Grafo Dirigido de Dependências** e usa o **`git diff`** para calcular exatamente quais arquivos sofrerão impacto direto e indireto antes mesmo do seu próximo `git commit`.
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="images/testeprojetocli.png" alt="Rich Terminal Output" width="100%"/>
+      <br/><b>Terminal Rich Tree</b><br/>
+      <sub>Visualização imediata no terminal dos impactos diretos, indiretos e arquivos seguros.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="images/testeprojeto3.png" alt="Interactive Web Graph" width="100%"/>
+      <br/><b>Grafo Interativo (Vis.js)</b><br/>
+      <sub>Navegação hierárquica por camadas. Clique em qualquer módulo para destacar suas conexões em vermelho.</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
-## 🏗️ Arquitetura e Estrutura do Módulo
+## ⚖️ ImpactTrace vs Abordagens Tradicionais
 
-Uma das maiores vantagens de engenharia do ImpactTrace é a sua **modularidade**. Você **não** precisa clonar nem copiar todo o repositório de desenvolvimento do ImpactTrace para o seu projeto pessoal.
+| Recursos | Git Diff Padrão | Code Review Manual | **ImpactTrace** |
+|---|:---:|:---:|:---:|
+| **Visão de Mudança Direta** | ✅ | ✅ | ✅ |
+| **Mapeamento de Efeito Cascata** | ❌ | 🧠 Lento / Falho | ✅ **Instantâneo (AST)** |
+| **Relatório Otimizado para LLMs / Agentes** | ❌ | ❌ | ✅ **JSON Estruturado** |
+| **Visualização de Grafo Interativo** | ❌ | ❌ | ✅ **HTML / Vis.js** |
+| **Detecção de Type-Checking vs Runtime** | ❌ | ❌ | ✅ |
 
-Basta copiar a pasta **`impact/`** (e o arquivo `requirements.txt` do projeto pra dentro da pasta `impact/`) para a raiz do seu projeto existente:
+---
 
-```text
-seu-projeto-pessoal/
-├── impact/                <-- Apenas esta pasta precisa ser copiada!
-│   ├── requirements_impact.txt
-│   ├── ast_parser.py      # Extração de AST e Hashes SHA-256
-│   ├── browser.py         # Launch e fallback de navegadores
-│   ├── cli.py             # Ponto de entrada CLI (Typer)
-│   ├── config.py          # Gerenciamento de workspace e .impact/
-│   ├── git_service.py     # Leitura do git diff / status
-│   ├── graph_engine.py    # Algoritmos de busca em grafos (NetworkX)
-│   └── visualizer.py      # Renderizador Rich (Terminal) e Pyvis (HTML)
-├── .impact/               # Gerado automaticamente (cache local e reports)
-├── database.py
-├── models.py
-├── endpoints.py
-└── requirements.txt
+## 🏗️ Arquitetura
+
+```
+
+┌────────────────────────────────────────────────────────────────────┐
+│  ImpactTrace CLI / Core Engine                                     │
+├────────────────────────────────────────────────────────────────────┤
+│  1. Git Diff Detector   ➔  Identifica arquivos alterados           │
+│  2. AST Dependency Parser➔ Mapeia imports (Runtime & Type-Check)   │
+│  3. NetworkX Graph      ➔ Calculador de impacto (Predecessors)     │
+├──────────────────────────┬─────────────────────────────────────────┤
+│  Renderers               │  Exportadores                           │
+│  • Rich Terminal Tree    │  • Relatório HTML (Vis.js Interativo)    │
+│  • Force & Top-Down Graph│  • Relatório AI JSON (LLM Context)       │
+└──────────────────────────┴─────────────────────────────────────────┘
 
 ```
 
 ---
 
-## ⚖️ Trade-offs de Engenharia: Design e Performance
+## 🤖 Uso com Agentes de IA (Cursor, Claude Code, Windsurf)
 
-Ao projetar o ImpactTrace, tomamos decisões conscientes sobre onde investir tempo e recursos:
+Passe o contexto de impacto direto para o seu agente antes de pedir refatorações:
 
-| Aspecto | Decisão de Design | Trade-off Assumido |
-| --- | --- | --- |
-| **Instalação das Bibliotecas** | Uso de dependências como `pyvis`, `networkx`, `rich` e `gitpython`. | **A Instalação Inicial Não é Veloz:** O download e compilação dessas bibliotecas no `pip install` leva alguns segundos a mais. |
-| **Visualização no Navegador** | Geração de HTML5 interativo via VisNetwork. | **A Recompensa:** Gráficos ricos, arrastáveis, com zoom e alternância de layout (Hierárquico vs Força-Dirigida) que eliminam qualquer dúvida sobre a arquitetura. |
-| **Execução do Scan e Análise** | Parser AST com cache incremental via SHA-256 e poda no nível do S.O. | **Velocidade Ultra-Rápida ($O(N)$):** O escaneamento e o cálculo de impacto rodam em **poucos milissegundos**, mesmo em projetos com centenas de arquivos. |
+```bash
+impact analyze --format ai-json > .impact-context.json
+
+```
 
 ---
 
@@ -171,17 +204,29 @@ Atualmente, o ImpactTrace funciona com mapeamento na granularidade de **arquivos
 [ Versão Atual 1.0 ] ➔ Mapeamento de Dependências entre Arquivos (.py)
         │
         ▼
-[ Versão 2.0 (Em Breve) ] ➔ Análise Fina de Símbolos Internos
+[ Versão 2.0 ] ➔ Análise Fina de Símbolos Internos
                           ├── Rastreamento de Funções Chamas
                           ├── Inspecção de Importação de Variáveis e Classes
                           └── Identificação do Escopo Exato da Quebra
 
 ```
 
-> 💡 **Nota do Desenvolvedor:** A ideia é evoluir a análise AST para entender exatamente qual **função** ou **variável** dentro do arquivo causará a quebra, *sem que precisemos construir um compilador completo... ou quase isso! 😉*
+---
+
+## ⚖️ Trade-offs de Engenharia: Design e Performance
+
+Ao projetar o ImpactTrace, tomamos decisões conscientes sobre onde investir tempo e recursos:
+
+| Aspecto | Decisão de Design | Trade-off Assumido |
+| --- | --- | --- |
+| **Instalação das Bibliotecas** | Uso de dependências como `pyvis`, `networkx`, `rich` e `gitpython`. | **A Instalação Inicial Não é Veloz:** O download e compilação dessas bibliotecas no `pip install` leva alguns segundos a mais. |
+| **Visualização no Navegador** | Geração de HTML5 interativo via VisNetwork. | **A Recompensa:** Gráficos ricos, arrastáveis, com zoom e alternância de layout (Hierárquico vs Força-Dirigida) que eliminam qualquer dúvida sobre a arquitetura. |
+| **Execução do Scan e Análise** | Parser AST com cache incremental via SHA-256 e poda no nível do S.O. | **Velocidade Ultra-Rápida ($O(N)$):** O escaneamento e o cálculo de impacto rodam em **poucos milissegundos**, mesmo em projetos com centenas de arquivos. |
 
 ---
 
 ## 📄 Licença
 
 Este projeto é distribuído sob a licença **MIT**. Sinta-se livre para adaptar e utilizar no seu fluxo de trabalho diário.
+
+

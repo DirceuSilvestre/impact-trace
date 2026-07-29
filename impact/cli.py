@@ -325,6 +325,7 @@ def analyze(
         stderr_console.print(f"[bold red]✗ Erro ao executar a análise:[/bold red] {e}")
         raise typer.Exit(code=1)
 
+#aaAA AAAa aa aa 
 
 if __name__ == "__main__":
     app()
