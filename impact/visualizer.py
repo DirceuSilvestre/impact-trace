@@ -123,13 +123,14 @@ def generate_full_architectural_graph(
             "font": {"color": "#FFFFFF", "face": "Inter, system-ui, sans-serif"},
         })
 
-    # 2. Processamento das Arestas
+    # 2. Processamento das Arestas (adicionando ID único para controle visual dinâmico)
     edges_data = []
-    for u, v, data in graph.edges(data=True):
+    for idx, (u, v, data) in enumerate(graph.edges(data=True)):
         edge_type = data.get("type", "runtime")
         is_type_checking = edge_type == "type_checking"
 
         edges_data.append({
+            "id": f"edge_{idx}",
             "from": u,
             "to": v,
             "arrows": "to",
@@ -261,6 +262,35 @@ def generate_full_architectural_graph(
         }};
 
         let network = new vis.Network(container, data, '{initial_layout}' === 'hierarchical' ? hierarchicalOptions : forceOptions);
+
+        // Destaca as arestas conectadas ao nó clicado
+        network.on("click", function (params) {{
+            if (params.nodes.length > 0) {{
+                const selectedNode = params.nodes[0];
+                const connectedEdgeIds = network.getConnectedEdges(selectedNode);
+
+                const updates = rawEdges.map(edge => {{
+                    const isConnected = connectedEdgeIds.includes(edge.id);
+                    return {{
+                        id: edge.id,
+                        color: isConnected 
+                            ? {{ color: '#EF4444', highlight: '#EF4444', opacity: 1.0 }} 
+                            : {{ color: '#334155', opacity: 0.15 }},
+                        width: isConnected ? 3 : 1
+                    }};
+                }});
+
+                edges.update(updates);
+            }} else {{
+                // Reseta todas as arestas ao clicar fora
+                const resetUpdates = rawEdges.map(edge => ({{
+                    id: edge.id,
+                    color: edge.color,
+                    width: 1
+                }}));
+                edges.update(resetUpdates);
+            }}
+        }});
 
         function toggleLayout(type) {{
             if (type === 'hierarchical') {{
