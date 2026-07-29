@@ -8,6 +8,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         ".venv",
         "venv",
         "__pycache__",
+        "impact",
         ".impact",
         ".pytest_cache",
         "build",
